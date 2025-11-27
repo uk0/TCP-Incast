@@ -35,3 +35,20 @@ I find a potential bug in current DCTCP (TCP/ECN) imeplmentation. The ECN standa
 To solve this problem, there are mainly two kinds of solutions. One is to modify your switch which is not convenient. The other solution is to mark ECT bits on end hosts using iptables/Netfilter. You can use following command to achieve this:
 
 iptables -A OUTPUT -t mangle -p tcp -j TOS --set-tos 2    
+
+
+Test(锐速一样的方案只不过锐速处理了http等一些场景，并且放弃了令牌桶算法)
+========
+
+```bash
+cd pac
+
+make 
+
+
+insmod pac.ko
+
+./load_acce.sh
+
+```
+
