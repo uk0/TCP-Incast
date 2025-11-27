@@ -1,22 +1,14 @@
-#include <linux/version.h>
-#include <net/net_namespace.h>
 
-/* Netfilter API changed in kernel 4. 13 */
+#include <linux/version.h>
+
+/* Netfilter API changed in kernel 4.13 */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
 	#define NF_NEW_HOOK_API 1
 #endif
 
-/* Netfilter API changed in kernel 4.1 for hook function signature */
+/* Netfilter API changed again in kernel 4. 1 for hook function signature */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
 	#define NF_NEW_HOOK_FUNC 1
-#endif
-
-/* okfn signature changed in kernel 4.4 */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
-	#define OKFN_NEW_API 1
-	typedef int (*okfn_t)(struct net *, struct sock *, struct sk_buff *);
-#else
-typedef int (*okfn_t)(struct sk_buff *);
 #endif
 
 #include <linux/module.h>
@@ -46,6 +38,7 @@ typedef int (*okfn_t)(struct sk_buff *);
 #include "queue.h" 
 #include "params.h"
 #include "network_func.h"
+#include "pac_control.c"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("BAI Wei baiwei0427@gmail.com");
@@ -104,7 +97,6 @@ static struct hrtimer hr_timer;
 static unsigned int hook_func_out(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
 	const struct net_device *out = state->out;
-	okfn_t okfn = state->okfn;
 #elif defined(NF_NEW_HOOK_FUNC)
 static unsigned int hook_func_out(const struct nf_hook_ops *ops, struct sk_buff *skb,
 								   const struct net_device *in, const struct net_device *out,
@@ -126,6 +118,10 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb,
 	unsigned int payload_len;      //TCP payload length
 	unsigned short int prio;       //Priority of the flow
 	int result=0;
+
+#if defined(NF_NEW_HOOK_API)
+	int (*okfn)(struct net *, struct sock *, struct sk_buff *) = state->okfn;
+#endif
 
     if(!out)
     {
@@ -168,7 +164,7 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb,
             spin_lock_irqsave(&tableLock,flags);
             if(Insert_Table(&ft,&f)==0)
             {
-                printk(KERN_INFO "Insert fails\n");
+                PAC_LOG(KERN_INFO "Insert fails\n");
             }
             spin_unlock_irqrestore(&tableLock,flags);
             //We expect an incoming SYN or ACK packet
@@ -259,7 +255,7 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb,
         //When we observe trigger>=bucket, the kernel module will be crashed
         if(trigger>=bucket)
         {
-            printk(KERN_INFO "Alert: the trigger is %u which is larger than the in-flight traffic threshold\n",trigger);
+            PAC_LOG(KERN_INFO "Alert: the trigger is %u which is larger than the in-flight traffic threshold\n",trigger);
         }
 		//Modify TCP timestamp for outgoing packets
 		tcp_modify_outgoing(skb,0,get_tsval());
@@ -273,7 +269,7 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb,
             spin_lock_irqsave(&globalLock,flags);
 			tokens+=trigger;
             spin_unlock_irqrestore(&globalLock,flags);
-            //printk(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
+            //PAC_LOG(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
 			return NF_ACCEPT;
 		}
       
@@ -285,12 +281,12 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb,
             
 		if(result==1)//Enqueue successfully 
         { 
-			//printk(KERN_INFO "Enqueue a packet\n");
+			//PAC_LOG(KERN_INFO "Enqueue a packet\n");
 			return NF_STOLEN;
         } 
         else//No enough space in queue 
         {       
-			printk(KERN_INFO "No enough space in queue\n");
+			PAC_LOG(KERN_INFO "No enough space in queue\n");
 			return NF_DROP;
 		}
         return NF_ACCEPT;
@@ -359,7 +355,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb,
             spin_lock_irqsave(&tableLock,flags);
 			if(Delete_Table(&ft,&f)==0)
             {
-                printk(KERN_INFO "Delete fails\n");
+                PAC_LOG(KERN_INFO "Delete fails\n");
             }
             spin_unlock_irqrestore(&tableLock,flags);
         }
@@ -367,7 +363,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb,
         {
             //Get reverse RTT
             rtt=tcp_modify_incoming(skb);
-            //printk(KERN_INFO "%u\n", rtt);
+            //PAC_LOG(KERN_INFO "%u\n", rtt);
             //Search flow information in the table
             spin_lock_irqsave(&tableLock,flags);
             info_pointer=Search_Table(&ft,&f);
@@ -401,7 +397,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb,
                     info_pointer->last_update=get_tsval();
                     throughput=info_pointer->bytes_sent_latest*8/time;
                     //if(throughput>0)
-                    //    printk(KERN_INFO "Current throughput is %lu Mbps\n",throughput);
+                    //    PAC_LOG(KERN_INFO "Current throughput is %lu Mbps\n",throughput);
                     info_pointer->bytes_sent_latest=0;
                     if(throughput<=info_pointer->last_throughput*ALPHA/1000)
                     {
@@ -409,7 +405,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb,
                         if(info_pointer->throughput_reduction_num>=REDUCTION_THRESH&&info_pointer->phase==SLOW_START)
                         {
                             info_pointer->phase=CONGESTION_AVOIDANCE;
-                            printk(KERN_INFO "Throughput reduction indicates the flow comes into congestion avoidance\n");
+                            PAC_LOG(KERN_INFO "Throughput reduction indicates the flow comes into congestion avoidance\n");
                         }
                     }
                     //No consecutive throughput reduction
@@ -440,7 +436,7 @@ static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb,
             tokens=0;
         }
         //if(tokens>0)
-        //    printk(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
+        //    PAC_LOG(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
         total_rtt+=rtt;
         samples++;
         spin_unlock_irqrestore(&globalLock,flags);   
@@ -468,12 +464,12 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer )
         //Calculate incoming throughput (Mbps)
         throughput=traffic*8/time;
         //if(throughput>0)
-        //    printk(KERN_INFO "Current throughput is %lu Mbps\n",throughput);
+        //    PAC_LOG(KERN_INFO "Current throughput is %lu Mbps\n",throughput);
         if(throughput<ALPHA&&2*traffic>ecn_traffic)//*avg_throughput/1000&&2*traffic>ecn_traffic)
         {
             tokens=min(tokens,bucket*throughput/avg_throughput*2*traffic/(2*traffic-ecn_traffic));
             if(tokens>0)
-                printk(KERN_INFO "We reset in-flight traffic to %lu\n",tokens);
+                PAC_LOG(KERN_INFO "We reset in-flight traffic to %lu\n",tokens);
         }
         //Reset global information
         if(samples>0)
@@ -506,7 +502,7 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer )
                 spin_unlock_irqrestore(&globalLock,flags);
                 //Dequeue packets
                 Dequeue_PacketQueue(q_high);
-                //printk(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
+                //PAC_LOG(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
 			} 
             else if(get_tsval()-q_high->packets[q_high->head].enqueue_time>=MAX_DELAY)
             {
@@ -540,7 +536,7 @@ static enum hrtimer_restart my_hrtimer_callback( struct hrtimer *timer )
                     spin_unlock_irqrestore(&globalLock,flags);
                     //Dequeue packets
                     Dequeue_PacketQueue(q_low);
-                    //printk(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
+                    //PAC_LOG(KERN_INFO "Current in-flight traffic is %lu\n",tokens);
                 } 
                 else if(get_tsval()-q_low->packets[q_low->head].enqueue_time>=MAX_DELAY)
                 {
@@ -570,7 +566,7 @@ int init_module(void)
      //Get interface
     if(param_dev==NULL) 
     {
-        printk(KERN_INFO "PAC: not specify network interface (eth0 by default). \n");
+        PAC_LOG(KERN_INFO "PAC: not specify network interface (eth0 by default). \n");
         param_dev = "eth0\0";
 	}
     // trim 
@@ -627,7 +623,7 @@ int init_module(void)
 	nfho_incoming.hooknum=NF_INET_PRE_ROUTING;				//called in pre_routing
 	nfho_incoming.pf = PF_INET;								//IPV4 packets
 	nfho_incoming.priority = NF_IP_PRI_FIRST;				//set to highest priority over all other hook functions
-
+		
 #if defined(NF_NEW_HOOK_API)
 	nf_register_net_hook(&init_net, &nfho_outgoing);
 	nf_register_net_hook(&init_net, &nfho_incoming);
@@ -636,7 +632,11 @@ int init_module(void)
 	nf_register_hook(&nfho_incoming);
 #endif
 
-	printk(KERN_INFO "Install PAC kernel module\n");
+	if (pac_setup_proc() != 0) {
+		printk(KERN_ERR "PAC: Failed to setup proc interface\n");
+	}
+
+	PAC_LOG(KERN_INFO "Install PAC kernel module\n");
 	return 0;
 }
 
@@ -644,11 +644,13 @@ void cleanup_module(void)
 {
 	int ret;
 
+	pac_remove_proc();
+
 	ret = hrtimer_cancel( &hr_timer );
 	if (ret)
     {
-		printk("The timer was still in use...\n");
-	} 
+		PAC_LOG("The timer was still in use...\n");
+	}
 
 #if defined(NF_NEW_HOOK_API)
 	nf_unregister_net_hook(&init_net, &nfho_outgoing);
@@ -658,11 +660,12 @@ void cleanup_module(void)
 	nf_unregister_hook(&nfho_incoming);
 #endif
 
+
 	Free_PacketQueue(q_high);
     Free_PacketQueue(q_low);
     //Clear flow table
 	//Print_Table(&ft);
 	Empty_Table(&ft);
-	printk(KERN_INFO "Uninstall PAC kernel module\n");
+	PAC_LOG(KERN_INFO "Uninstall PAC kernel module\n");
 	
 }
