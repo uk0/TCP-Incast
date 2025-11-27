@@ -1,4 +1,25 @@
-#include <linux/module.h> 
+#include <linux/version.h>
+#include <net/net_namespace.h>
+
+/* Netfilter API changed in kernel 4. 13 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,13,0)
+	#define NF_NEW_HOOK_API 1
+#endif
+
+/* Netfilter API changed in kernel 4.1 for hook function signature */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
+	#define NF_NEW_HOOK_FUNC 1
+#endif
+
+/* okfn signature changed in kernel 4.4 */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+	#define OKFN_NEW_API 1
+	typedef int (*okfn_t)(struct net *, struct sock *, struct sk_buff *);
+#else
+typedef int (*okfn_t)(struct sk_buff *);
+#endif
+
+#include <linux/module.h>
 #include <linux/kernel.h> 
 #include <linux/init.h>
 #include <linux/types.h>
@@ -79,18 +100,32 @@ static struct hrtimer hr_timer;
 
 
 //POSTROUTING for outgoing packets, enqueue packets
-static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
+#if defined(NF_NEW_HOOK_API)
+static unsigned int hook_func_out(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-    struct iphdr *ip_header;       //IP header structure
-    struct tcphdr *tcp_header;  //TCP header structure
-    struct Flow f;
-    struct Info* info_pointer=NULL;
-    unsigned int trigger=0;          //The volume of traffic that ACK packet can trigger
-    unsigned long flags;               //variable for save current states of irq
-    unsigned int ack;                    //The ACK number of this packet
-    unsigned int payload_len;  //TCP payload length
-    unsigned short int prio;        //Priority of the flow
-    int result=0;
+	const struct net_device *out = state->out;
+	okfn_t okfn = state->okfn;
+#elif defined(NF_NEW_HOOK_FUNC)
+static unsigned int hook_func_out(const struct nf_hook_ops *ops, struct sk_buff *skb,
+								   const struct net_device *in, const struct net_device *out,
+								   int (*okfn)(struct sk_buff *))
+{
+#else
+static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb,
+								   const struct net_device *in, const struct net_device *out,
+								   int (*okfn)(struct sk_buff *))
+{
+#endif
+	struct iphdr *ip_header;       //IP header structure
+	struct tcphdr *tcp_header;     //TCP header structure
+	struct Flow f;
+	struct Info* info_pointer=NULL;
+	unsigned int trigger=0;        //The volume of traffic that ACK packet can trigger
+	unsigned long flags;           //variable for save current states of irq
+	unsigned int ack;              //The ACK number of this packet
+	unsigned int payload_len;      //TCP payload length
+	unsigned short int prio;       //Priority of the flow
+	int result=0;
 
     if(!out)
     {
@@ -264,17 +299,30 @@ static unsigned int hook_func_out(unsigned int hooknum, struct sk_buff *skb, con
 }
 
 //PREROUTING for incoming packets
-static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb, const struct net_device *in, const struct net_device *out, int (*okfn)(struct sk_buff *))
+#if defined(NF_NEW_HOOK_API)
+static unsigned int hook_func_in(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
-	struct iphdr *ip_header;             //IP header structure
-	struct tcphdr *tcp_header;        //TCP header structure
-    struct Flow f;
-    unsigned long flags;
+	const struct net_device *in = state->in;
+#elif defined(NF_NEW_HOOK_FUNC)
+static unsigned int hook_func_in(const struct nf_hook_ops *ops, struct sk_buff *skb,
+								  const struct net_device *in, const struct net_device *out,
+								  int (*okfn)(struct sk_buff *))
+{
+#else
+static unsigned int hook_func_in(unsigned int hooknum, struct sk_buff *skb,
+								  const struct net_device *in, const struct net_device *out,
+								  int (*okfn)(struct sk_buff *))
+{
+#endif
+	struct iphdr *ip_header;       //IP header structure
+	struct tcphdr *tcp_header;     //TCP header structure
+	struct Flow f;
+	unsigned long flags;
 	struct Info* info_pointer=NULL;
-	unsigned int rtt=0;		                //Sample RTT value
-    unsigned int payload_len;        //TCP payload length
-    unsigned int throughput;          //Incoming throughput
-    unsigned int time;
+	unsigned int rtt=0;            //Sample RTT value
+	unsigned int payload_len;      //TCP payload length
+	unsigned int throughput;       //Incoming throughput
+	unsigned int time;
 	    
     if(!in)
     {
@@ -522,8 +570,8 @@ int init_module(void)
      //Get interface
     if(param_dev==NULL) 
     {
-        printk(KERN_INFO "PAC: not specify network interface (eth1 by default). \n");
-        param_dev = "eth1\0";
+        printk(KERN_INFO "PAC: not specify network interface (eth0 by default). \n");
+        param_dev = "eth0\0";
 	}
     // trim 
 	for(i = 0; i < 32 && param_dev[i] != '\0'; i++) 
@@ -573,15 +621,21 @@ int init_module(void)
 	nfho_outgoing.hooknum = NF_INET_POST_ROUTING;         	//called in post_routing
 	nfho_outgoing.pf = PF_INET;     						//IPV4 packets
 	nfho_outgoing.priority = NF_IP_PRI_FIRST;             	//set to highest priority over all other hook functions
-	nf_register_hook(&nfho_outgoing);                     	//register hook*/
-	
+
 	//PREROUTING
 	nfho_incoming.hook=hook_func_in;						//function to call when conditions below met    
 	nfho_incoming.hooknum=NF_INET_PRE_ROUTING;				//called in pre_routing
 	nfho_incoming.pf = PF_INET;								//IPV4 packets
 	nfho_incoming.priority = NF_IP_PRI_FIRST;				//set to highest priority over all other hook functions
-	nf_register_hook(&nfho_incoming);						//register hook*/
-	
+
+#if defined(NF_NEW_HOOK_API)
+	nf_register_net_hook(&init_net, &nfho_outgoing);
+	nf_register_net_hook(&init_net, &nfho_incoming);
+#else
+	nf_register_hook(&nfho_outgoing);
+	nf_register_hook(&nfho_incoming);
+#endif
+
 	printk(KERN_INFO "Install PAC kernel module\n");
 	return 0;
 }
@@ -596,8 +650,14 @@ void cleanup_module(void)
 		printk("The timer was still in use...\n");
 	} 
 
+#if defined(NF_NEW_HOOK_API)
+	nf_unregister_net_hook(&init_net, &nfho_outgoing);
+	nf_unregister_net_hook(&init_net, &nfho_incoming);
+#else
 	nf_unregister_hook(&nfho_outgoing);
 	nf_unregister_hook(&nfho_incoming);
+#endif
+
 	Free_PacketQueue(q_high);
     Free_PacketQueue(q_low);
     //Clear flow table

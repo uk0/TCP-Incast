@@ -3,48 +3,67 @@
 
 #include <linux/types.h>
 
-//microsecond to nanosecond
-#define US_TO_NS(x)	(x * 1E3L)
-//millisecond to nanosecond
-#define MS_TO_NS(x)	(x * 1E6L)
-//Slow start
+// 时间单位转换
+#define US_TO_NS(x)    ((x) * 1000L)
+#define MS_TO_NS(x)    ((x) * 1000000L)
+
+// TCP 阶段
 #define SLOW_START 0
-//Congestion avoidance
 #define CONGESTION_AVOIDANCE 1
-//High priority 
+
+// 流优先级
 #define HIGH_PRIORITY 0
-//Low priority
 #define LOW_PRIORITY 1
 
-//MSS: 1460 bytes
-static unsigned int MSS=1460;
-//TCP Initial Window (3MSS by default)
-static unsigned int MIN_WIN=3;
-//Timer interval
-static unsigned long DELAY_IN_US=50L;
-//Base RTT: 200 us
-static unsigned int MIN_RTT=200;
-//Maximum RTT: 1ms
-static unsigned int MAX_RTT=1000;
-//Maximum delay added by PAC in the absence of short flows: 10ms
-static unsigned int MAX_DELAY=10000;
-//Switch buffer size. By default, it is 80KB (4MB/48 ports) in our testbed
-static unsigned int BUFFER_SIZE=80*1024;
-//Minimal TCP packet length (Ethernet header 14+IP header 20+TCP header 20+TCP option 20=74)
-static unsigned int MIN_PKT_LEN=74;
+// ============ 基础参数 ============
+// MSS: 1460 bytes
+static unsigned int MSS = 1460;
 
-//parameter to smooth incoming throughput: sthroughput=throughput_smooth/1000*sthroughput+(1000-throughput_smooth)/1000*throughput in the interval 
-static unsigned int THROUGHPUT_SMOOTH=200;
-//parameter to smooth RTT: srtt=rtt_smooth/1000*srtt+(1000-rtt_smooth)/1000*rtt
-static unsigned int RTT_SMOOTH=875;
-//parameter to determine throughput reduction (alpha/1000)
-static unsigned int ALPHA=800;
-//Per-flow throughput reduction threshold
-static unsigned short int REDUCTION_THRESH=3;
+// 初始窗口：广域网建议 10 MSS
+static unsigned int MIN_WIN = 10;
 
-//priority threshold (bytes). It is 1MB by default in our experiments
-static unsigned long PRIO_THRESH=1024*1024;
-//Slow start threshold
-static unsigned long SS_THRESH=1024*1024;
+// ============ 定时器参数 ============
+// 定时器间隔：5ms（广域网不需要微秒级精度）
+static unsigned long DELAY_IN_US = 5000L;
 
-#endif 
+// ============ RTT 参数 ============
+// 基础 RTT：166ms = 166000us
+static unsigned int MIN_RTT = 166000;
+
+// 最大 RTT：允许 3 倍抖动，约 500ms
+static unsigned int MAX_RTT = 500000;
+
+// 最大排队延迟：设为 2 个 RTT（330ms）
+// 超过此时间的包会被强制发送
+static unsigned int MAX_DELAY = 330000;
+
+// ============ 令牌桶参数（核心！）============
+// BDP = 100Mbps * 166ms = 12.5Mbps * 0.166s = 2. 075 MB
+// 设为 1.5 倍 BDP，允许一定的突发
+static unsigned int BUFFER_SIZE = 3 * 1024 * 1024;  // 3MB
+
+// 最小包长度
+static unsigned int MIN_PKT_LEN = 74;
+
+// ============ 平滑参数 ============
+// 吞吐量平滑：0.8 * 旧值 + 0.2 * 新值
+static unsigned int THROUGHPUT_SMOOTH = 800;
+
+// RTT 平滑：0.9 * 旧值 + 0.1 * 新值
+static unsigned int RTT_SMOOTH = 900;
+
+// ============ 拥塞检测参数 ============
+// 吞吐量下降阈值：下降到 60% 以下才认为是拥塞
+static unsigned int ALPHA = 600;
+
+// 连续下降次数阈值：需要连续 5 次才切换到拥塞避免
+static unsigned short int REDUCTION_THRESH = 5;
+
+// ============ 流分类参数 ============
+// 短流阈值：10MB 以下为高优先级
+static unsigned long PRIO_THRESH = 10UL * 1024 * 1024;
+
+// 慢启动阈值：5MB
+static unsigned long SS_THRESH = 5UL * 1024 * 1024;
+
+#endif

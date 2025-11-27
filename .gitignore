@@ -4,6 +4,7 @@
 
 *.pydevproject
 .project
+copy_server.sh
 .metadata
 bin/
 tmp/
