@@ -10,11 +10,17 @@
 //last_seq: The latest sequence number of this flow
 //last_throughput: The latest incoming throughput of this flow (Mbps)
 //last_update: The last update time (unit: us)
-//throughput_reduction_num: the number of consecutive intervals of throughput reduction  
+//throughput_reduction_num: the number of consecutive intervals of throughput reduction
+
+// 连接方向定义
+#define FLOW_DIR_SERVER 0   // 服务器模式：本机接收入站连接（入站 SYN）
+#define FLOW_DIR_CLIENT 1   // 客户端模式：本机主动发起连接（出站 SYN）
+
 struct Info
 {
 	unsigned int srtt;
 	unsigned short int phase;
+	unsigned short int direction;      // 新增：连接方向
 	unsigned long bytes_sent_latest;
     unsigned long bytes_sent_total;
     unsigned int last_ack;

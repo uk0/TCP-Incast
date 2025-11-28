@@ -22,8 +22,8 @@ printk(KERN_DEBUG "PAC: " fmt, ##__VA_ARGS__); \
 #define CONGESTION_AVOIDANCE 1
 
 // 流优先级
-#define HIGH_PRIORITY 0
-#define LOW_PRIORITY 1
+#define HIGH_PRIORITY 1
+#define LOW_PRIORITY 0
 
 
 static char PAC_NIC[32] = "eth0";
@@ -76,6 +76,6 @@ static unsigned short int REDUCTION_THRESH = 5;
 static unsigned long PRIO_THRESH = 10UL * 1024 * 1024;
 
 // 慢启动阈值：5MB
-static unsigned long SS_THRESH = 5UL * 1024 * 1024;
+static unsigned long SS_THRESH = 8UL * 1024 * 1024;
 
 #endif

@@ -50,5 +50,9 @@ insmod pac.ko
 
 ./load_acce.sh
 
+# test command
+iperf3 -4 -s -p 35201
+
+iperf3 -c IP -p 35201 -R -t 30
 ```
 
