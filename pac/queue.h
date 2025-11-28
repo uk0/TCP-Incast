@@ -16,8 +16,7 @@
 #endif
 
 // 队列大小：广域网需要更大的队列
-// BDP / MSS ≈ 2MB / 1460 ≈ 1400 包，设为 4 倍
-#define QUEUE_SIZE 16384
+#define QUEUE_SIZE 131072
 
 struct Packet
 {
